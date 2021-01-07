@@ -27,8 +27,10 @@
 #ifndef picohttpparser_h
 #define picohttpparser_h
 
-#include <memory.h>
+
+#include <sys/types.h>
 #include <inttypes.h>
+#include <memory.h>
 
 #ifdef _MSC_VER
 #define ssize_t intptr_t
