@@ -1,0 +1,56 @@
+name: Dev Build
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: suilteam/base:alpine
+
+    steps:
+      - uses: actions/checkout@v2
+      # Create a build directory
+      - name: Create Build Environment
+        run: |
+          cmake -E make_directory ${{runner.workspace}}/debug
+          cmake -E make_directory ${{runner.workspace}}/release
+      # Configure CMake project
+      - name: Configure CMake
+        shell: bash
+        run: |
+          cd ${{runner.workspace}}/debug
+          cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=Debug
+          cd ${{runner.workspace}}/release
+          cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=Release
+      # Build project
+      - name: Build
+        shell: bash
+        run: |
+          cd ${{runner.workspace}}/debug
+          make -j4
+          cd ${{runner.workspace}}/release
+          make picohttp-bench -j4
+      # Execute unittests project
+      - name: UnitTests
+        shell: bash
+        run: |
+          cd ${{runner.workspace}}/debug
+          ./picohttp-test -r junit > picohttpparser.xml
+      # Execute benchmark program
+      - name: Benchmark
+        shell: bash
+        run: |
+          cd ${{runner.workspace}}/release
+          lscpu  | grep -E "(Model)|(MHz)|(CPU\(s\))" > picohttparser-bench.txt
+          { time ./picohttp-bench ; } 2>&1 | tee -a picohttparser-bench.txt
+      - name: Cached Artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: test-results
+          path: |
+            ${{runner.workspace}}/debug/picohttpparser.xml
+            ${{runner.workspace}}/release/picohttparser-bench.txt
+          retention-days: 1
