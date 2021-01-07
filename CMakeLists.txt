@@ -45,7 +45,7 @@ install(TARGETS picohttp
         ARCHIVE  DESTINATION lib
         INCLUDES DESTINATION include)
 
-install(FILES parser.h
+install(FILES parser.h parser.hpp
         DESTINATION include/picohttp)
 
 install(FILES "${PROJECT_CONFIG}" "${VERSION_CONFIG}"
