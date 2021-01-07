@@ -38,18 +38,18 @@ jobs:
         shell: bash
         run: |
           cd ${{runner.workspace}}/debug
-          ./picohttp-test -r junit -o picohttpparser.xml
+          ./picohttp-test -r junit > picohttpparser.xml
       # Execute benchmark program
       - name: Benchmark
         shell: bash
         run: |
           cd ${{runner.workspace}}/release
           lscpu  | grep -E "(Model)|(MHz)|(CPU\(s\))" > picohttparser-bench.txt
-          { time ./picohttp-bench ; } 2>&1 | tee -a bench.txt
+          { time ./picohttp-bench ; } 2>&1 | tee -a picohttparser-bench.txt
       - name: Cached Artifacts
         uses: actions/upload-artifact@v2
         with:
-          name: unit-test-binaries
+          name: test-results
           path: |
             ${{runner.workspace}}/debug/picohttpparser.xml
             ${{runner.workspace}}/release/picohttparser-bench.txt
