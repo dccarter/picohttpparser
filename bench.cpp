@@ -52,6 +52,7 @@ int main(void)
     DefaultRequestParser parser;
     RequestParserCb cb(parser);
     for (i = 0; i < 1000000; i++) {
+        parser.reset();
         ret = phr_parse_request(REQ, sizeof(REQ) - 1, &parser, &RequestParserCb::Instance, 0);
         assert(ret == sizeof(REQ) - 1);
     }

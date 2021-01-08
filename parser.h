@@ -150,6 +150,7 @@ typedef struct phr_request {
             uint8_t _u3: 3;
         };
     };
+    int   rewind;
     void* cbp;
 } phr_request_t;
 
@@ -184,6 +185,7 @@ typedef struct phr_response {
             uint8_t _u3: 3;
         };
     };
+    int rewind;
     void* cbp;
 } phr_response_t;
 
@@ -199,6 +201,7 @@ int phr_parse_response(
 int phr_parse_headers(
     const char *buf,
     size_t len,
+    int* rewind,
     void* data,
     int(*on_header)(void*, const char*, size_t, const char*, size_t),
     size_t last_len);

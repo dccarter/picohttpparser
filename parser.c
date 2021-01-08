@@ -59,7 +59,7 @@
 
 #define CHECK_EOF()                                                                                                                \
     if (buf == buf_end) {                                                                                                          \
-        *ret = -2;                                                                                                                 \
+        *ret = -2;                                                                                                             \
         return NULL;                                                                                                               \
     }
 
@@ -309,6 +309,7 @@ static const char *parse_headers(
     const char *buf,
     const char *buf_end,
     void *data,
+    int  *rewind,
     int(*on_header)(void*, const char*, size_t, const char*, size_t),
     int(*on_header_p)(void*,
                      int(void*, const char*, size_t, const char*, size_t),
@@ -316,6 +317,8 @@ static const char *parse_headers(
     size_t max_headers,
     int *ret)
 {
+    const char *start = buf;
+    int off = *rewind;
     size_t num_headers = 0;
     for (;; ++num_headers) {
         CHECK_EOF();
@@ -372,6 +375,7 @@ static const char *parse_headers(
         if (*ret != 0) {
             return NULL;
         }
+        *rewind = off + (int)(buf-start);
     }
 
     return buf;
@@ -537,70 +541,77 @@ static const char *parse_request(
     size_t max_headers,
     int *ret)
 {
-    /* skip first empty line (some clients add CRLF after POST content) */
-    CHECK_EOF();
-    if (*buf == '\015') {
-        ++buf;
-        EXPECT_CHAR('\012');
-    } else if (*buf == '\012') {
-        ++buf;
-    }
+    const char *start = buf;
+    if (req->minor_version == -1) {
+        /* To make the parse re-entrant */
 
-    const char *value = NULL;
-    size_t len = 0;
-    /* parse request line */
-    if ((buf = parse_token(buf, buf_end, &value, &len, ' ', ret)) == NULL) {
-        return NULL;
-    }
-
-    req->method = parse_method(value, len);
-    if (req->method == M_UNKNOWN) {
-        *ret = -1;
-        return NULL;
-    }
-
-    do {
-        ++buf;
+        /* skip first empty line (some clients add CRLF after POST content) */
         CHECK_EOF();
-    } while (*buf == ' ');
+        if (*buf == '\015') {
+            ++buf;
+            EXPECT_CHAR('\012');
+        } else if (*buf == '\012') {
+            ++buf;
+        }
 
-    ADVANCE_TOKEN(value, len);
-    if (len == 0) {
-        *ret = -1;
-        return NULL;
+        const char *value = NULL;
+        size_t len = 0;
+        /* parse request line */
+        if ((buf = parse_token(buf, buf_end, &value, &len, ' ', ret)) == NULL) {
+            return NULL;
+        }
+
+        req->method = parse_method(value, len);
+        if (req->method == M_UNKNOWN) {
+            *ret = -1;
+            return NULL;
+        }
+
+        do {
+            ++buf;
+            CHECK_EOF();
+        } while (*buf == ' ');
+
+        ADVANCE_TOKEN(value, len);
+        if (len == 0) {
+            *ret = -1;
+            return NULL;
+        }
+
+        *ret = cb->on_path(req->cbp, value, len);
+        if (*ret != 0) {
+            return NULL;
+        }
+
+        do {
+            ++buf;
+            CHECK_EOF();
+        } while (*buf == ' ');
+
+        int minor_ver;
+        if ((buf = parse_http_version(buf, buf_end, &minor_ver, ret)) == NULL) {
+            req->minor_version = -1;
+            return NULL;
+        }
+        req->minor_version = (int8_t)(minor_ver);
+
+        if (*buf == '\015') {
+            ++buf;
+            EXPECT_CHAR('\012');
+        } else if (*buf == '\012') {
+            ++buf;
+        } else {
+            *ret = -1;
+            return NULL;
+        }
     }
 
-    *ret = cb->on_path(req->cbp, value, len);
-    if (*ret != 0) {
-        return NULL;
-    }
-
-    do {
-        ++buf;
-        CHECK_EOF();
-    } while (*buf == ' ');
-
-    int minor_ver;
-    if ((buf = parse_http_version(buf, buf_end, &minor_ver, ret)) == NULL) {
-        req->minor_version = -1;
-        return NULL;
-    }
-    req->minor_version = (int8_t)(minor_ver);
-
-    if (*buf == '\015') {
-        ++buf;
-        EXPECT_CHAR('\012');
-    } else if (*buf == '\012') {
-        ++buf;
-    } else {
-        *ret = -1;
-        return NULL;
-    }
-
+    req->rewind = (int)(buf - start);
     return parse_headers(
         buf,
         buf_end,
         req,
+        &req->rewind,
         cb->on_header,
         parse_request_on_header,
         max_headers,
@@ -641,58 +652,65 @@ static const char *parse_response(
     int max_headers,
     int *ret)
 {
-    /* parse "HTTP/1.x" */
-    int minor = 0;
-    if ((buf = parse_http_version(buf, buf_end, &minor, ret)) == NULL) {
-        return NULL;
-    }
-    resp->minor_version = (int8_t) minor;
-    /* skip space */
-    if (*buf != ' ') {
-        *ret = -1;
-        return NULL;
-    }
-    do {
-        ++buf;
-        CHECK_EOF();
-    } while (*buf == ' ');
-    /* parse status code, we want at least [:digit:][:digit:][:digit:]<other char> to try to parse */
-    if (buf_end - buf < 4) {
-        *ret = -2;
-        return NULL;
-    }
-    PARSE_INT_3(&resp->status);
-
-    /* get message including preceding space */
-    const char *tok;
-    size_t tok_len;
-    if ((buf = get_token_to_eol(buf, buf_end, &tok, &tok_len, ret)) == NULL) {
-        return NULL;
-    }
-    if (tok_len == 0) {
-        /* ok */
-    } else if (*tok == ' ') {
-        /* Remove preceding space. Successful return from `get_token_to_eol` guarantees that we would hit something other than SP
-         * before running past the end of the given buffer. */
-        do {
-            ++tok;
-            --tok_len;
-        } while (*tok == ' ');
-    } else {
-        /* garbage found after status code */
-        *ret = -1;
-        return NULL;
-    }
-
-    if (likely(cb->on_status)) {
-        *ret = cb->on_status(resp->cbp, tok, tok_len);
-        if (unlikely(*ret != 0)) {
+    if (resp->minor_version == -1) {
+        /* parse "HTTP/1.x" */
+        int minor = 0;
+        if ((buf = parse_http_version(buf, buf_end, &minor, ret)) == NULL) {
             return NULL;
+        }
+        resp->minor_version = (int8_t)minor;
+        /* skip space */
+        if (*buf != ' ') {
+            *ret = -1;
+            return NULL;
+        }
+        do {
+            ++buf;
+            CHECK_EOF();
+        } while (*buf == ' ');
+        /* parse status code, we want at least [:digit:][:digit:][:digit:]<other char> to try to parse */
+        if (buf_end - buf < 4) {
+            *ret = -2;
+            return NULL;
+        }
+        PARSE_INT_3(&resp->status);
+
+        /* get message including preceding space */
+        const char *tok;
+        size_t tok_len;
+        if ((buf = get_token_to_eol(buf, buf_end, &tok, &tok_len, ret)) == NULL) {
+            return NULL;
+        }
+        if (tok_len == 0) {
+            /* ok */
+        } else if (*tok == ' ') {
+            /* Remove preceding space. Successful return from `get_token_to_eol` guarantees that we would hit something other than SP before running past the end of the given buffer. */
+            do {
+                ++tok;
+                --tok_len;
+            } while (*tok == ' ');
+        } else {
+            /* garbage found after status code */
+            *ret = -1;
+            return NULL;
+        }
+
+        if (likely(cb->on_status)) {
+            *ret = cb->on_status(resp->cbp, tok, tok_len);
+            if (unlikely(*ret != 0)) {
+                return NULL;
+            }
         }
     }
 
     return parse_headers(
-        buf, buf_end, resp, cb->on_header, parse_response_on_header, max_headers, ret);
+                buf,
+                buf_end,
+                resp,
+                &resp->rewind,
+                cb->on_header,
+                parse_response_on_header,
+                max_headers, ret);
 }
 
 int phr_parse_response(
@@ -723,6 +741,7 @@ int phr_parse_response(
 int phr_parse_headers(
     const char *buf,
     size_t len,
+    int* rewind,
     void *data,
     int(*on_header)(void* data, const char*, size_t, const char*, size_t),
     size_t last_len)
@@ -737,7 +756,9 @@ int phr_parse_headers(
         return r;
     }
 
-    if ((buf = parse_headers(buf, buf_end, data, on_header, parse_untied_on_header, max_headers, &r)) == NULL) {
+    buf = parse_headers(
+            buf, buf_end, data, rewind, on_header, parse_untied_on_header, max_headers, &r);
+    if (buf == NULL) {
         return r;
     }
 

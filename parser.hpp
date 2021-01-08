@@ -160,6 +160,7 @@ struct request_parser : public parser<request_ctx> {
         flags = 0;
         major_version = 1;
         minor_version = -1;
+        rewind = 0;
     }
     virtual ~request_parser() = default;
 };
