@@ -40,14 +40,15 @@ using namespace picohttp;
 
 TEST_CASE("Test request", "[parse_request]")
 {
+    bool reset{true};
     DefaultRequestParser req;
     RequestParserCb cb(req);
 #define PARSE(s, last_len, exp)                                                                                                    \
     do {                                                                                                                           \
         size_t slen = sizeof(s) - 1;                                                                                               \
-        req.reset();                                                                                                               \
+        if (reset) req.reset(); reset = true;                                                                                      \
         memcpy(inputbuf - slen, s, slen);                                                                                          \
-        auto status = phr_parse_request(inputbuf - slen, slen, &req, &RequestParserCb::Instance, last_len);                              \
+        auto status = phr_parse_request(inputbuf - slen, slen, &req, &RequestParserCb::Instance, last_len);                        \
         REQUIRE(status == (exp == 0 ? (int)slen : exp));                                                                           \
     } while (0)
 
@@ -123,6 +124,12 @@ TEST_CASE("Test request", "[parse_request]")
             PARSE("GET / HTTP/1.0", 0, -2);
             PARSE("GET / HTTP/1.0\r", 0, -2);
             REQUIRE(req.minor_version == 0);
+            PARSE("GET / HTTP/1.0\r\nfoo: \r\nfoo: b\r\nbar: ", 0, -2);
+            REQUIRE(req.minor_version == 0);
+            REQUIRE(req.rewind == 31);
+            reset = false;
+            PARSE("bar: 100\r\n\r\n", 0, 0);
+            REQUIRE(req("bar") ==  "100");
 
             PARSE("GET /hoge HTTP/1.0\r\n\r", strlen("GET /hoge HTTP/1.0\r\n\r") - 1, -2);
             PARSE("GET /hoge HTTP/1.0\r\n\r\n", strlen("GET /hoge HTTP/1.0\r\n\r\n") - 1, 0);
@@ -388,7 +395,8 @@ TEST_CASE("Isolated header parsings")
 
 #define PARSE(s, last_len, exp)                                                                                           \
     do {                                                                                                                  \
-        auto status = phr_parse_headers(s, strlen(s), &hp, &HeaderParser::cbOnHeader, last_len);                          \
+        int rewind = 0;                                                                                                                  \
+        auto status = phr_parse_headers(s, strlen(s), &rewind, &hp, &HeaderParser::cbOnHeader, last_len);                          \
         REQUIRE(status ==(exp == 0 ? (int)strlen(s) : exp));                                                              \
     } while (0)
 
